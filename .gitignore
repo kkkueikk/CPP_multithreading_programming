@@ -41,9 +41,9 @@
 *.dwo
 
 # .vs
-.vs\*
+.vs/
 
-.vscode\*
+.vscode/
 
 # Visual C++ compiler files
 vc*.pdb
