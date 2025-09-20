@@ -39,3 +39,11 @@
 
 # debug information files
 *.dwo
+
+# .vs
+.vs\*
+
+.vscode\*
+
+# Visual C++ compiler files
+vc*.pdb
