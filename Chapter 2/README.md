@@ -56,7 +56,7 @@ The std::thread constructor can't store a C-style array directly. So, it applies
 
 The `opps` func is very likely to be destroyed before buffer is converted to std::string, leading to undefined behavior. 
 #### 2. References Require Explicit Wrapping
-You cannot bind a non-const lvalue reference (like widget_data&) to an rvalue (a temporary or a copied object), std::thread will always make a copy.
+You cannot bind a non-const lvalue reference (like widget_data&) to an rvalue (a temporary or a copied object).
 
 ```
     void update_data(widget_data& data); // Function wants a non-const reference
@@ -68,8 +68,15 @@ You cannot bind a non-const lvalue reference (like widget_data&) to an rvalue (a
         t.join();
     }
 ```
+When you pass arguments to std::thread, it always copies them by default. So std::thread t(update_data, data) tries to:
+
+1. Copy data into the thread's storage (creating a temporary/rvalue)
+2. Pass this temporary copy to update_data(widget_data& data)
+3. But update_data expects a non-const reference, which cannot bind to temporaries
 
 Therefore when passing reference or pointer to thread func, use `std::ref`
+`std::ref(data)` creates a reference wrapper that tells `std::thread` "don't copy this, pass the actual reference to the original object."
+
 
 3. If the arguments are data (e.g. `std::unique_pointer` and `std::thread`) which allow movable but not copyable, will leave the original object empty. Besides, use `std::move()` to move named value.
 
@@ -129,6 +136,7 @@ ownership, copyable, movable, use case, performance
     if(t1_id == no_thread_id){
         # logic to implement when the t1_id has no associated thread
     }
+# Extra
 ## Files Generated After Compiling C++ Code
 
 When you compile and run a C++ file, several additional files are created:
@@ -138,4 +146,280 @@ When you compile and run a C++ file, several additional files are created:
 - **.ilk** - Incremental Link file used by Visual Studio for faster rebuilds
 - **.pdb** - Program Database file containing debugging information
 
-These files are normal build artifacts and can be safely deleted if needed, though the .exe is required to run your program.
+Prompts so you can practise yourself:
+“Here are my study notes on [topic]. Based on these notes, please generate a set of programming quizzes with filenames. Each quiz should test either a small concept from the notes or combine multiple concepts for deeper understanding. The quizzes should encourage me to apply the knowledge, not just recall it.”
+
+## this_thread is a Namespace, not an Object!
+std::this_thread is a namespace that groups helper functions (sleep_for, sleep_until, get_id, etc.).
+No thread state is stored — each function just asks the OS about the current thread.
+
+## move... rvalues and move semantics
+
+**Move semantics** is a key feature introduced in **C++11** that optimizes object creation by avoiding unnecessary copying.
+
+### The Role of Rvalues and Temporary Objects
+
+When you write:
+
+```cpp
+std::thread t1 = spawnThread();
+```
+
+or
+
+```cpp
+std::thread t1(spawnThread());
+```
+
+and `spawnThread()` returns a `std::thread` object, it creates a **temporary object**. In C++, temporary objects are classified as **rvalues**.
+
+### Automatic Move Construction
+
+Because C++ is designed to optimize the handling of these temporaries, **rvalues can bind directly to a move constructor**.
+
+This means that for the code above, the compiler automatically treats the initialization as:
+
+```cpp
+std::thread t1(std::move(spawnThread()));
+```
+
+Instead of performing a potentially expensive **copy** operation, the `std::thread` object returned by `spawnThread()` is **moved** into `t1`. This is critical for classes like `std::thread` (and other resource-owning classes) because they typically **cannot be copied**, but **can be moved** to safely transfer ownership of the underlying resource (like the execution context of the thread).
+
+**In short:** The compiler recognizes that the temporary object will immediately be destroyed, so it optimizes the process by **moving** its resources to the new object (`t1`) rather than making a full copy. The process is one of **transferring ownership**, not duplicating data.
+## Why we don't need `new` to create an object in C++ but it is needed in Java?
+
+### 1️⃣ C++: Stack vs Heap
+
+In C++, you can create an object either on the stack or on the heap:
+
+    #include <iostream>
+    struct Widget {
+        int value;
+    };
+
+    int main() {
+        Widget w;        // ✅ Stack allocation — no `new` needed
+        w.value = 10;
+
+        Widget* p = new Widget(); // ✅ Heap allocation — `new` returns a pointer
+        p->value = 20;
+
+        delete p;         // Must free heap memory manually
+    }
+
+#### Key points:
+Good reference:
+https://stackoverflow.com/questions/79923/what-and-where-are-the-stack-and-heap
+**1. Stack allocation (Widget w;)**
+
+The object lives inside the current function’s stack frame.
+
+Automatically destroyed when it goes out of scope.
+
+No new needed.
+
+**2. Heap allocation (new Widget())**
+
+Object lives on the heap.
+
+You get a pointer to it.
+
+Must manually delete (delete) when done.
+
+C++ gives you flexibility: you can choose stack or heap.
+
+2️⃣ Java: Everything is on the heap
+class Widget {
+    int value;
+}
+
+public class Main {
+    public static void main(String[] args) {
+        Widget w = new Widget(); // ✅ must use `new`
+        w.value = 10;
+    }
+}
+
+Key points:
+
+In Java, all objects are created on the heap.
+
+You always get a reference to the object (like a pointer).
+
+The stack only stores the reference, not the object itself.
+
+Memory is automatically managed by the Garbage Collector, so you don’t call delete.
+
+3️⃣ Why the difference exists
+Feature	C++	Java
+Default object storage	Stack (unless new)	Heap only
+Lifetime management	Manual (stack scope / delete)	Automatic (GC)
+Object access	Direct or via pointer	Always via reference
+Flexibility	Stack or Heap	Heap only
+
+In short:
+
+C++ can create objects on the stack, which don’t require new and are automatically destroyed.
+Java forces heap allocation, so new is always needed.
+
+1️⃣ How stack allocation works in C++
+
+When you write:
+
+void foo() {
+    int x = 42;   // stack allocation
+}
+
+
+x lives in the stack frame of foo().
+
+Allocating it just means moving the stack pointer (a CPU register) down by 4 bytes (for an int).
+
+Deallocating it means moving the stack pointer back up when foo() exits.
+
+No OS calls, no bookkeeping, no metadata — just pointer arithmetic.
+
+👉 Time complexity: O(1) allocation + O(1) deallocation
+👉 Practically just a couple of CPU instructions. Super fast.
+
+2️⃣ How heap allocation works in C++ (and Java)
+
+When you write:
+
+int* p = new int(42);   // heap allocation
+
+
+The request goes to a memory allocator (like malloc, new, or Java’s GC-managed heap).
+
+The allocator:
+
+Finds a free block of memory in the heap.
+
+Splits memory blocks, updates free lists / bitmaps.
+
+Returns a pointer to that block.
+
+Deallocation (delete in C++, garbage collection in Java) requires extra bookkeeping:
+
+C++ frees it directly with delete.
+
+Java waits for GC to eventually discover that the object is unreachable, then reclaims it.
+
+👉 Heap allocation is much slower than stack — involves metadata, synchronization, and in Java, GC overhead.
+
+3️⃣ Why Java is always heap-based
+
+In Java, all objects live on the heap.
+
+Even small objects (like new Integer(42)) require allocation via the allocator.
+
+Java’s Garbage Collector pauses occasionally to reclaim heap memory — adding latency.
+
+Local variables in Java are references to heap objects, not the objects themselves.
+
+4️⃣ Why C++ can be faster
+
+C++ lets you choose stack (fast) or heap (flexible).
+
+For small, short-lived objects, stack allocation is almost always better.
+
+That’s why C++ RAII works so well: objects clean themselves up automatically when the stack frame unwinds.
+
+Example:
+
+void fast() {
+    std::string s = "Hello"; // stack-allocated string object
+    // destructor runs automatically when scope ends
+}
+
+
+vs. Java:
+
+void slower() {
+    String s = new String("Hello"); // heap allocation
+    // wait for GC eventually
+}
+
+Ah, good question! This touches on **ownership semantics** in C++ threads and the difference between **references** vs **moving**. Let’s go step by step.
+
+---
+
+## 1️⃣ Current design: `ThreadGuard guard(t);`
+
+```cpp
+std::thread t(...);
+ThreadGuard guard(t); // t is passed by reference
+```
+
+* `ThreadGuard` stores a **reference** (`std::thread &t`) to the original thread.
+* The **RAII guard does not take ownership** of the thread object itself; it only ensures it gets joined.
+* After the guard goes out of scope, the **original thread object `t` still exists**, but it has been safely joined.
+
+---
+
+## 2️⃣ What if you did `std::move(t)`?
+
+```cpp
+ThreadGuard guard(std::move(t));
+```
+
+* `std::move(t)` **turns `t` into an rvalue** — it signals that you want to **transfer ownership**.
+* But the `ThreadGuard` constructor is defined as:
+
+```cpp
+explicit ThreadGuard(std::thread &thread)
+```
+
+* It **expects an lvalue reference**, not an rvalue.
+* Passing `std::move(t)` here would **fail to compile**, because an rvalue **cannot bind to a non-const lvalue reference**.
+
+---
+
+## 3️⃣ Could we design `ThreadGuard` to take ownership?
+
+Yes — if we want the guard to **own the thread** instead of just referencing it:
+
+```cpp
+class ThreadGuard {
+    std::thread t; // store the thread object itself
+public:
+    explicit ThreadGuard(std::thread thread) : t(std::move(thread)) {}
+    ~ThreadGuard() {
+        if (t.joinable()) t.join();
+    }
+    ThreadGuard(const ThreadGuard&) = delete;
+    ThreadGuard& operator=(const ThreadGuard&) = delete;
+};
+```
+
+* Now you **can do**:
+
+```cpp
+ThreadGuard guard(std::move(t)); // ownership transferred
+```
+
+* The RAII guard now **owns the thread object**, and the original `t` is empty (`!joinable()`).
+* This is safer in some cases because **no one else can call join on the same thread**, preventing double joins.
+
+---
+
+### 4️⃣ Key distinction
+
+| Approach                               | Guard stores | Ownership | Can original thread be used after? |
+| -------------------------------------- | ------------ | --------- | ---------------------------------- |
+| `ThreadGuard(std::thread &t)`          | reference    | No        | Yes, original thread still exists  |
+| `ThreadGuard(std::thread t)` with move | copy/move    | Yes       | No, original thread is moved-from  |
+
+---
+
+💡 **Summary**
+
+* You **cannot pass `std::move(t)`** to a constructor that takes `std::thread&`.
+* If you want to move the thread into the guard, you **must design the guard to own a `std::thread` internally**.
+* Using a reference keeps ownership outside the guard; moving gives the guard full ownership.
+
+---
+
+If you want, I can **rewrite your `ThreadGuard` to be move-safe**, showing the best practice for modern C++ RAII threads.
+
+Do you want me to do that?
